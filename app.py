@@ -1,5 +1,6 @@
 """
-KB Briefing Mensal - Servidor de Automacao v6
+KB Briefing Mensal - Servidor de Automacao v7
+Dashboard visual com graficos e KPIs
 """
 from flask import Flask, request, jsonify
 import requests as req_lib
@@ -27,6 +28,34 @@ Estruture o diagnostico nas seguintes secoes:
 Responda sempre em portugues. Seja especifico e actionavel."""
 
 
+def parse_numero(texto):
+    """Tenta extrair um numero de um texto livre."""
+    if not texto:
+        return None
+    t = texto.lower().strip()
+    t = re.sub(r'r\$\s*', '', t)
+    t = t.replace('.', '').replace(',', '.')
+    multiplicador = 1
+    if 'mil' in t or 'k' in t:
+        multiplicador = 1000
+        t = re.sub(r'[kmil]+', '', t)
+    nums = re.findall(r'\d+(?:\.\d+)?', t)
+    if nums:
+        try:
+            return float(nums[0]) * multiplicador
+        except Exception:
+            pass
+    return None
+
+
+def formatar_moeda(valor):
+    if valor is None:
+        return None
+    if valor >= 1000:
+        return f"R$ {valor:,.0f}".replace(',', '.')
+    return f"R$ {valor:.0f}"
+
+
 def chamar_groq(dados_str):
     if not GROQ_API_KEY:
         return "Erro: GROQ_API_KEY nao configurada."
@@ -50,332 +79,4 @@ def chamar_groq(dados_str):
 
 
 def rt(texto):
-    """Cria rich_text para propriedade Notion, truncado em 2000 chars."""
     return [{"type": "text", "text": {"content": str(texto)[:2000]}}]
-
-
-def paragrafo(texto, bold=False):
-    return {"object": "block", "type": "paragraph",
-            "paragraph": {"rich_text": [{"type": "text", "text": {"content": texto},
-                                         "annotations": {"bold": bold}}]}}
-
-
-def heading2(texto):
-    return {"object": "block", "type": "heading_2",
-            "heading_2": {"rich_text": [{"type": "text", "text": {"content": texto}}]}}
-
-
-def heading3(texto):
-    return {"object": "block", "type": "heading_3",
-            "heading_3": {"rich_text": [{"type": "text", "text": {"content": texto}}]}}
-
-
-def divider():
-    return {"object": "block", "type": "divider", "divider": {}}
-
-
-def callout(texto, icon="\U0001f5a4"):
-    return {"object": "block", "type": "callout",
-            "callout": {"rich_text": [{"type": "text", "text": {"content": texto}}],
-                        "icon": {"type": "emoji", "emoji": icon},
-                        "color": "gray_background"}}
-
-
-def blocos_formulario(dados):
-    blocos = []
-    blocos.append(heading2("\U0001f5a4 BRIEFING DO CLIENTE"))
-    blocos.append(divider())
-
-    pode_gravar = dados.get("podeGravar", "")
-    if pode_gravar:
-        blocos.append(heading3("Disponibilidade para Gravacao"))
-        blocos.append(callout(pode_gravar))
-
-    campos_comerciais = []
-    for campo, label in [
-        ("mes", "Mes de referencia"),
-        ("faturamento", "Faturamento"),
-        ("novosClientes", "Novos clientes"),
-        ("servicoDestaque", "Servico em destaque"),
-        ("precoMedio", "Preco medio"),
-        ("ticketMedio", "Ticket medio"),
-        ("satisfacaoClientes", "Satisfacao dos clientes"),
-    ]:
-        val = dados.get(campo, "")
-        if val:
-            campos_comerciais.append(f"{label}: {val}")
-
-    if campos_comerciais:
-        blocos.append(heading3("Dados Comerciais"))
-        blocos.append(callout("\n".join(campos_comerciais)))
-
-    campos_conteudo = [
-        ("historias", "Historias do mes"),
-        ("temas", "Temas sugeridos"),
-        ("bastidores", "Bastidores"),
-        ("duvidasFrequentes", "Duvidas frequentes"),
-        ("tendencias", "Tendencias do setor"),
-        ("objetivoPrincipal", "Objetivo principal"),
-        ("observacoes", "Observacoes"),
-    ]
-    tem_conteudo = any(dados.get(c, "") for c, _ in campos_conteudo)
-    if tem_conteudo:
-        blocos.append(heading3("Historias e Conteudo"))
-        for campo, label in campos_conteudo:
-            val = dados.get(campo, "")
-            if val:
-                blocos.append(callout(f"{label}: {val}"))
-
-    blocos.append(divider())
-    blocos.append(heading2("\U0001f5a4 DIAGNOSTICO ESTRATEGICO"))
-    blocos.append(divider())
-    return blocos
-
-
-def texto_para_blocos(texto):
-    blocos = []
-    for linha in texto.strip().split("\n"):
-        linha = linha.strip()
-        if not linha:
-            continue
-        if re.match(r"^\d+\.\s+[A-Z][A-Z ]+$", linha):
-            blocos.append(heading3(linha))
-        elif linha.startswith("**") and linha.endswith("**"):
-            blocos.append(paragrafo(linha.strip("*"), bold=True))
-        elif linha.startswith("#"):
-            nivel = len(linha) - len(linha.lstrip("#"))
-            texto_h = linha.lstrip("#").strip()
-            blocos.append(heading2(texto_h) if nivel <= 2 else heading3(texto_h))
-        else:
-            blocos.append(paragrafo(linha))
-    return blocos
-
-
-def salvar_no_notion(dados, diagnostico):
-    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
-        return {"erro": "Notion nao configurado"}
-
-    cliente = dados.get("cliente", "Cliente")
-    mes = dados.get("mes", datetime.now().strftime("%m/%Y"))
-    titulo = f"Briefing {cliente} - {mes}"
-
-    headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-    }
-
-    # Propriedades com as respostas do cliente
-    properties = {
-        "Cliente": {"title": rt(titulo)},
-    }
-    if dados.get("podeGravar"):
-        properties["Disponibilidade"] = {"rich_text": rt(dados["podeGravar"])}
-    if dados.get("faturamento"):
-        properties["Faturamento"] = {"rich_text": rt(dados["faturamento"])}
-    if dados.get("novosClientes"):
-        properties["Novos Clientes"] = {"rich_text": rt(dados["novosClientes"])}
-    if dados.get("servicoDestaque"):
-        properties["Servico Destaque"] = {"rich_text": rt(dados["servicoDestaque"])}
-    if dados.get("historias"):
-        properties["Historias"] = {"rich_text": rt(dados["historias"])}
-    if dados.get("objetivoPrincipal"):
-        properties["Objetivo"] = {"rich_text": rt(dados["objetivoPrincipal"])}
-    if dados.get("observacoes"):
-        properties["Observacoes"] = {"rich_text": rt(dados["observacoes"])}
-
-    body = {
-        "parent": {"database_id": NOTION_DATABASE_ID},
-        "properties": properties,
-        "children": []
-    }
-
-    resp = req_lib.post("https://api.notion.com/v1/pages", headers=headers, json=body, timeout=30)
-    if not resp.ok:
-        return {"erro": resp.text}
-
-    page_id = resp.json().get("id")
-    todos_blocos = blocos_formulario(dados) + texto_para_blocos(diagnostico)
-    for i in range(0, len(todos_blocos), 100):
-        lote = todos_blocos[i:i+100]
-        req_lib.patch(
-            f"https://api.notion.com/v1/blocks/{page_id}/children",
-            headers=headers, json={"children": lote}, timeout=30
-        )
-
-    return {"ok": True, "page_id": page_id, "titulo": titulo}
-
-
-def prop_text(page, nome):
-    """Extrai texto de uma rich_text property."""
-    try:
-        items = page["properties"][nome]["rich_text"]
-        return items[0]["text"]["content"] if items else ""
-    except Exception:
-        return ""
-
-
-def build_dashboard_html(pages):
-    cards = ""
-    for page in pages:
-        props = page.get("properties", {})
-        titulo_prop = props.get("Cliente", {}).get("title", [])
-        titulo = titulo_prop[0]["text"]["content"] if titulo_prop else "Sem titulo"
-        created = page.get("created_time", "")[:10]
-        page_url = page.get("url", "#")
-
-        disponibilidade = prop_text(page, "Disponibilidade")
-        faturamento = prop_text(page, "Faturamento")
-        novos_clientes = prop_text(page, "Novos Clientes")
-        servico = prop_text(page, "Servico Destaque")
-        historias = prop_text(page, "Historias")
-        objetivo = prop_text(page, "Objetivo")
-        observacoes = prop_text(page, "Observacoes")
-
-        def campo_html(label, valor):
-            if not valor:
-                return ""
-            return (
-                '<div class="resp-row">'
-                '<span class="resp-label">' + label + '</span>'
-                '<span class="resp-val">' + valor + '</span>'
-                '</div>'
-            )
-
-        respostas = (
-            campo_html("Gravação", disponibilidade) +
-            campo_html("Faturamento", faturamento) +
-            campo_html("Novos clientes", novos_clientes) +
-            campo_html("Serviço destaque", servico) +
-            campo_html("Histórias", historias) +
-            campo_html("Objetivo", objetivo) +
-            campo_html("Observações", observacoes)
-        )
-
-        tem_respostas = any([disponibilidade, faturamento, novos_clientes, servico, historias, objetivo, observacoes])
-        respostas_block = '<div class="resp-body">' + respostas + '</div>' if tem_respostas else '<div class="resp-empty">Briefing anterior ao novo formato</div>'
-
-        cards += (
-            '<div class="card">'
-            '<div class="card-head">'
-            '<div>'
-            '<div class="card-heart">\U0001f5a4</div>'
-            '<div class="card-title">' + titulo + '</div>'
-            '<div class="card-date">' + created + '</div>'
-            '</div>'
-            '<a class="card-notion" href="' + page_url + '" target="_blank">Abrir no Notion \u2192</a>'
-            '</div>'
-            + respostas_block +
-            '</div>'
-        )
-
-    total = len(pages)
-    plural = "s" if total != 1 else ""
-    empty_block = "" if cards else '<div class="empty"><span>\U0001f5a4</span>Nenhum briefing encontrado ainda.</div>'
-
-    return """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>KB Company \u00b7 Dashboard de Briefings</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
-<style>
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0a0a0a;color:#f0ede8;font-family:Inter,sans-serif;font-weight:300;min-height:100vh;padding:0 20px 80px}
-  .header{max-width:900px;margin:0 auto;padding:64px 0 52px;text-align:center;border-bottom:1px solid #1e1e1e}
-  .logo{font-size:11px;font-weight:500;letter-spacing:.3em;text-transform:uppercase;color:#444;margin-bottom:22px}
-  h1{font-size:clamp(26px,5vw,44px);font-weight:300;letter-spacing:-.02em;color:#f0ede8;line-height:1.1}
-  .sub{margin-top:14px;font-size:13px;color:#555;letter-spacing:.08em;text-transform:uppercase}
-  .bar{margin-top:28px;display:flex;align-items:center;justify-content:center;gap:10px}
-  .count{display:inline-block;background:#141414;border:1px solid #252525;border-radius:20px;padding:7px 18px;font-size:13px;color:#666}
-  .refresh{font-size:12px;color:#444;cursor:pointer;border:1px solid #2a2a2a;border-radius:20px;padding:7px 14px;background:#111;text-decoration:none;transition:border-color .2s,color .2s}
-  .refresh:hover{border-color:#c8a96e;color:#c8a96e}
-  .list{max-width:900px;margin:48px auto 0;display:flex;flex-direction:column;gap:18px}
-  .card{background:#111;border:1px solid #1c1c1c;border-radius:14px;overflow:hidden;transition:border-color .2s}
-  .card:hover{border-color:#2e2e2e}
-  .card-head{display:flex;align-items:flex-start;justify-content:space-between;padding:26px 28px 22px;border-bottom:1px solid #1a1a1a}
-  .card-heart{font-size:18px;margin-bottom:10px;opacity:.5}
-  .card-title{font-size:15px;font-weight:400;color:#e8e4de;line-height:1.4;margin-bottom:6px}
-  .card-date{font-size:12px;color:#444;letter-spacing:.06em}
-  .card-notion{font-size:12px;color:#444;text-decoration:none;border:1px solid #222;border-radius:8px;padding:6px 12px;white-space:nowrap;transition:border-color .2s,color .2s;margin-top:4px}
-  .card-notion:hover{border-color:#c8a96e;color:#c8a96e}
-  .resp-body{padding:20px 28px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px 24px}
-  .resp-row{display:flex;flex-direction:column;gap:4px}
-  .resp-label{font-size:10px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:#555}
-  .resp-val{font-size:13px;color:#c8c4be;line-height:1.5}
-  .resp-empty{padding:18px 28px;font-size:13px;color:#333;font-style:italic}
-  .empty{max-width:900px;margin:100px auto;text-align:center;color:#333;font-size:15px}
-  .empty span{display:block;font-size:52px;margin-bottom:18px;opacity:.2}
-  .footer{max-width:900px;margin:60px auto 0;text-align:center;font-size:12px;color:#2a2a2a;letter-spacing:.12em;text-transform:uppercase}
-</style>
-</head>
-<body>
-<div class="header">
-  <div class="logo">KB Company</div>
-  <h1>Dashboard de Briefings</h1>
-  <div class="sub">Respostas mensais dos clientes</div>
-  <div class="bar">
-    <span class="count">""" + str(total) + " briefing" + plural + " registrado" + plural + """</span>
-    <a class="refresh" href="/dashboard">\u21bb Atualizar</a>
-  </div>
-</div>
-<div class="list">""" + (cards if cards else empty_block) + """</div>
-<div class="footer">KB Company &copy; """ + str(datetime.now().year) + """</div>
-</body>
-</html>"""
-
-
-@app.route("/dashboard", methods=["GET"])
-def dashboard():
-    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
-        return "<h1>Notion nao configurado</h1>", 500
-
-    headers_notion = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-    }
-
-    resp = req_lib.post(
-        f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query",
-        headers=headers_notion,
-        json={"sorts": [{"timestamp": "created_time", "direction": "descending"}], "page_size": 50},
-        timeout=30
-    )
-    if not resp.ok:
-        return f"<h1>Erro: {resp.text}</h1>", 500
-
-    pages = resp.json().get("results", [])
-    return build_dashboard_html(pages)
-
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        content_type = request.content_type or ""
-        if "application/json" in content_type:
-            dados = request.get_json(force=True)
-        else:
-            dados = request.form.to_dict()
-
-        if not dados:
-            return jsonify({"erro": "Dados vazios"}), 400
-
-        dados_str = json.dumps(dados, ensure_ascii=False, indent=2)
-        diagnostico = chamar_groq(dados_str)
-        resultado_notion = salvar_no_notion(dados, diagnostico)
-        return jsonify({"ok": True, "diagnostico": diagnostico, "notion": resultado_notion})
-
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
-
-
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({"status": "KB Briefing Mensal v6 - online"})
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
