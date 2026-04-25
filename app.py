@@ -1,5 +1,5 @@
 """
-KB Briefing Mensal - Servidor de Automacao v4
+KB Briefing Mensal - Servidor de Automacao v5
 """
 from flask import Flask, request, jsonify
 import requests as req_lib
@@ -69,7 +69,7 @@ def divider():
     return {"object": "block", "type": "divider", "divider": {}}
 
 
-def callout(texto, icon="🖤"):
+def callout(texto, icon="\U0001f5a4"):
     return {"object": "block", "type": "callout",
             "callout": {"rich_text": [{"type": "text", "text": {"content": texto}}],
                         "icon": {"type": "emoji", "emoji": icon},
@@ -78,7 +78,7 @@ def callout(texto, icon="🖤"):
 
 def blocos_formulario(dados):
     blocos = []
-    blocos.append(heading2("🖤 BRIEFING DO CLIENTE"))
+    blocos.append(heading2("\U0001f5a4 BRIEFING DO CLIENTE"))
     blocos.append(divider())
 
     pode_gravar = dados.get("podeGravar", "")
@@ -122,7 +122,7 @@ def blocos_formulario(dados):
                 blocos.append(callout(f"{label}: {val}"))
 
     blocos.append(divider())
-    blocos.append(heading2("🖤 DIAGNOSTICO ESTRATEGICO"))
+    blocos.append(heading2("\U0001f5a4 DIAGNOSTICO ESTRATEGICO"))
     blocos.append(divider())
     return blocos
 
@@ -184,6 +184,97 @@ def salvar_no_notion(dados, diagnostico):
     return {"ok": True, "page_id": page_id, "titulo": titulo}
 
 
+def build_dashboard_html(pages):
+    cards = ""
+    for page in pages:
+        props = page.get("properties", {})
+        titulo_prop = props.get("Cliente", {}).get("title", [])
+        titulo = titulo_prop[0]["text"]["content"] if titulo_prop else "Sem titulo"
+        created = page.get("created_time", "")[:10]
+        page_url = page.get("url", "#")
+        cards += (
+            '<a class="card" href="' + page_url + '" target="_blank">'
+            '<div class="card-heart">\U0001f5a4</div>'
+            '<div class="card-title">' + titulo + '</div>'
+            '<div class="card-date">' + created + '</div>'
+            '<div class="card-arrow">\u2192</div>'
+            '</a>'
+        )
+
+    total = len(pages)
+    plural = "s" if total != 1 else ""
+    empty_block = "" if cards else '<div class="empty"><span>\U0001f5a4</span>Nenhum briefing encontrado ainda.</div>'
+
+    return """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>KB Company \u00b7 Dashboard de Briefings</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0a0a;color:#f0ede8;font-family:Inter,sans-serif;font-weight:300;min-height:100vh;padding:0 20px 80px}
+  .header{max-width:860px;margin:0 auto;padding:64px 0 52px;text-align:center;border-bottom:1px solid #1e1e1e}
+  .logo{font-size:11px;font-weight:500;letter-spacing:.3em;text-transform:uppercase;color:#444;margin-bottom:22px}
+  h1{font-size:clamp(28px,5vw,48px);font-weight:300;letter-spacing:-.02em;color:#f0ede8;line-height:1.1}
+  .sub{margin-top:14px;font-size:14px;color:#555;letter-spacing:.08em;text-transform:uppercase}
+  .count{display:inline-block;margin-top:32px;background:#141414;border:1px solid #252525;border-radius:20px;padding:7px 18px;font-size:13px;color:#666}
+  .refresh{display:inline-block;margin-left:10px;font-size:12px;color:#333;cursor:pointer;border:1px solid #2a2a2a;border-radius:20px;padding:7px 14px;background:#111;text-decoration:none;vertical-align:middle;transition:border-color .2s}
+  .refresh:hover{border-color:#c8a96e;color:#c8a96e}
+  .grid{max-width:860px;margin:52px auto 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px}
+  .card{display:block;background:#111;border:1px solid #1c1c1c;border-radius:14px;padding:30px 26px;text-decoration:none;color:inherit;transition:border-color .2s,transform .15s;position:relative;overflow:hidden}
+  .card:hover{border-color:#c8a96e;transform:translateY(-3px)}
+  .card-heart{font-size:20px;margin-bottom:16px;opacity:.5}
+  .card-title{font-size:15px;font-weight:400;color:#e8e4de;line-height:1.45;margin-bottom:10px}
+  .card-date{font-size:12px;color:#444;letter-spacing:.06em}
+  .card-arrow{position:absolute;right:22px;top:50%;transform:translateY(-50%);font-size:20px;color:#2a2a2a;transition:color .2s,right .15s}
+  .card:hover .card-arrow{color:#c8a96e;right:18px}
+  .empty{max-width:860px;margin:100px auto;text-align:center;color:#333;font-size:15px}
+  .empty span{display:block;font-size:52px;margin-bottom:18px;opacity:.2}
+  .footer{max-width:860px;margin:60px auto 0;text-align:center;font-size:12px;color:#2a2a2a;letter-spacing:.12em;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">KB Company</div>
+  <h1>Dashboard de Briefings</h1>
+  <div class="sub">Respostas mensais dos clientes</div>
+  <div style="margin-top:28px">
+    <span class="count">""" + str(total) + " briefing" + plural + " registrado" + plural + """</span>
+    <a class="refresh" href="/dashboard">\u21bb atualizar</a>
+  </div>
+</div>
+<div class="grid">""" + (cards if cards else empty_block) + """</div>
+<div class="footer">KB Company &copy; """ + str(datetime.now().year) + """</div>
+</body>
+</html>"""
+
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
+        return "<h1>Notion nao configurado</h1>", 500
+
+    headers_notion = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    resp = req_lib.post(
+        f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query",
+        headers=headers_notion,
+        json={"sorts": [{"timestamp": "created_time", "direction": "descending"}], "page_size": 50},
+        timeout=30
+    )
+    if not resp.ok:
+        return f"<h1>Erro: {resp.text}</h1>", 500
+
+    pages = resp.json().get("results", [])
+    return build_dashboard_html(pages)
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
@@ -207,7 +298,7 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"status": "KB Briefing Mensal v4 - online"})
+    return jsonify({"status": "KB Briefing Mensal v5 - online"})
 
 
 if __name__ == "__main__":
