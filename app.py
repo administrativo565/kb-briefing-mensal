@@ -77,7 +77,7 @@ def salvar_no_notion(dados_str, diagnostico):
     titulo = f"Diagnostico {cliente} - {mes}"
     blocos = texto_para_blocos(diagnostico)
     headers = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
-    payload = {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": {"Nome": {"title": [{"text": {"content": titulo}}]}}, "children": blocos[:100]}
+    payload = {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": {"Cliente": {"title": [{"text": {"content": titulo}}]}}, "children": blocos[:100]}
     resp = req_lib.post("https://api.notion.com/v1/pages", headers=headers, json=payload, timeout=30)
     result = resp.json()
     if len(blocos) > 100 and result.get("id"):
