@@ -1,5 +1,5 @@
 """
-KB Briefing Mensal - Servidor de Automacao v5
+KB Briefing Mensal - Servidor de Automacao v6
 """
 from flask import Flask, request, jsonify
 import requests as req_lib
@@ -47,6 +47,11 @@ def chamar_groq(dados_str):
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"Erro ao chamar Groq: {str(e)}"
+
+
+def rt(texto):
+    """Cria rich_text para propriedade Notion, truncado em 2000 chars."""
+    return [{"type": "text", "text": {"content": str(texto)[:2000]}}]
 
 
 def paragrafo(texto, bold=False):
@@ -160,11 +165,28 @@ def salvar_no_notion(dados, diagnostico):
         "Notion-Version": "2022-06-28"
     }
 
+    # Propriedades com as respostas do cliente
+    properties = {
+        "Cliente": {"title": rt(titulo)},
+    }
+    if dados.get("podeGravar"):
+        properties["Disponibilidade"] = {"rich_text": rt(dados["podeGravar"])}
+    if dados.get("faturamento"):
+        properties["Faturamento"] = {"rich_text": rt(dados["faturamento"])}
+    if dados.get("novosClientes"):
+        properties["Novos Clientes"] = {"rich_text": rt(dados["novosClientes"])}
+    if dados.get("servicoDestaque"):
+        properties["Servico Destaque"] = {"rich_text": rt(dados["servicoDestaque"])}
+    if dados.get("historias"):
+        properties["Historias"] = {"rich_text": rt(dados["historias"])}
+    if dados.get("objetivoPrincipal"):
+        properties["Objetivo"] = {"rich_text": rt(dados["objetivoPrincipal"])}
+    if dados.get("observacoes"):
+        properties["Observacoes"] = {"rich_text": rt(dados["observacoes"])}
+
     body = {
         "parent": {"database_id": NOTION_DATABASE_ID},
-        "properties": {
-            "Cliente": {"title": [{"type": "text", "text": {"content": titulo}}]}
-        },
+        "properties": properties,
         "children": []
     }
 
@@ -184,6 +206,15 @@ def salvar_no_notion(dados, diagnostico):
     return {"ok": True, "page_id": page_id, "titulo": titulo}
 
 
+def prop_text(page, nome):
+    """Extrai texto de uma rich_text property."""
+    try:
+        items = page["properties"][nome]["rich_text"]
+        return items[0]["text"]["content"] if items else ""
+    except Exception:
+        return ""
+
+
 def build_dashboard_html(pages):
     cards = ""
     for page in pages:
@@ -192,13 +223,50 @@ def build_dashboard_html(pages):
         titulo = titulo_prop[0]["text"]["content"] if titulo_prop else "Sem titulo"
         created = page.get("created_time", "")[:10]
         page_url = page.get("url", "#")
+
+        disponibilidade = prop_text(page, "Disponibilidade")
+        faturamento = prop_text(page, "Faturamento")
+        novos_clientes = prop_text(page, "Novos Clientes")
+        servico = prop_text(page, "Servico Destaque")
+        historias = prop_text(page, "Historias")
+        objetivo = prop_text(page, "Objetivo")
+        observacoes = prop_text(page, "Observacoes")
+
+        def campo_html(label, valor):
+            if not valor:
+                return ""
+            return (
+                '<div class="resp-row">'
+                '<span class="resp-label">' + label + '</span>'
+                '<span class="resp-val">' + valor + '</span>'
+                '</div>'
+            )
+
+        respostas = (
+            campo_html("Gravação", disponibilidade) +
+            campo_html("Faturamento", faturamento) +
+            campo_html("Novos clientes", novos_clientes) +
+            campo_html("Serviço destaque", servico) +
+            campo_html("Histórias", historias) +
+            campo_html("Objetivo", objetivo) +
+            campo_html("Observações", observacoes)
+        )
+
+        tem_respostas = any([disponibilidade, faturamento, novos_clientes, servico, historias, objetivo, observacoes])
+        respostas_block = '<div class="resp-body">' + respostas + '</div>' if tem_respostas else '<div class="resp-empty">Briefing anterior ao novo formato</div>'
+
         cards += (
-            '<a class="card" href="' + page_url + '" target="_blank">'
+            '<div class="card">'
+            '<div class="card-head">'
+            '<div>'
             '<div class="card-heart">\U0001f5a4</div>'
             '<div class="card-title">' + titulo + '</div>'
             '<div class="card-date">' + created + '</div>'
-            '<div class="card-arrow">\u2192</div>'
-            '</a>'
+            '</div>'
+            '<a class="card-notion" href="' + page_url + '" target="_blank">Abrir no Notion \u2192</a>'
+            '</div>'
+            + respostas_block +
+            '</div>'
         )
 
     total = len(pages)
@@ -215,24 +283,31 @@ def build_dashboard_html(pages):
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{background:#0a0a0a;color:#f0ede8;font-family:Inter,sans-serif;font-weight:300;min-height:100vh;padding:0 20px 80px}
-  .header{max-width:860px;margin:0 auto;padding:64px 0 52px;text-align:center;border-bottom:1px solid #1e1e1e}
+  .header{max-width:900px;margin:0 auto;padding:64px 0 52px;text-align:center;border-bottom:1px solid #1e1e1e}
   .logo{font-size:11px;font-weight:500;letter-spacing:.3em;text-transform:uppercase;color:#444;margin-bottom:22px}
-  h1{font-size:clamp(28px,5vw,48px);font-weight:300;letter-spacing:-.02em;color:#f0ede8;line-height:1.1}
-  .sub{margin-top:14px;font-size:14px;color:#555;letter-spacing:.08em;text-transform:uppercase}
-  .count{display:inline-block;margin-top:32px;background:#141414;border:1px solid #252525;border-radius:20px;padding:7px 18px;font-size:13px;color:#666}
-  .refresh{display:inline-block;margin-left:10px;font-size:12px;color:#333;cursor:pointer;border:1px solid #2a2a2a;border-radius:20px;padding:7px 14px;background:#111;text-decoration:none;vertical-align:middle;transition:border-color .2s}
+  h1{font-size:clamp(26px,5vw,44px);font-weight:300;letter-spacing:-.02em;color:#f0ede8;line-height:1.1}
+  .sub{margin-top:14px;font-size:13px;color:#555;letter-spacing:.08em;text-transform:uppercase}
+  .bar{margin-top:28px;display:flex;align-items:center;justify-content:center;gap:10px}
+  .count{display:inline-block;background:#141414;border:1px solid #252525;border-radius:20px;padding:7px 18px;font-size:13px;color:#666}
+  .refresh{font-size:12px;color:#444;cursor:pointer;border:1px solid #2a2a2a;border-radius:20px;padding:7px 14px;background:#111;text-decoration:none;transition:border-color .2s,color .2s}
   .refresh:hover{border-color:#c8a96e;color:#c8a96e}
-  .grid{max-width:860px;margin:52px auto 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px}
-  .card{display:block;background:#111;border:1px solid #1c1c1c;border-radius:14px;padding:30px 26px;text-decoration:none;color:inherit;transition:border-color .2s,transform .15s;position:relative;overflow:hidden}
-  .card:hover{border-color:#c8a96e;transform:translateY(-3px)}
-  .card-heart{font-size:20px;margin-bottom:16px;opacity:.5}
-  .card-title{font-size:15px;font-weight:400;color:#e8e4de;line-height:1.45;margin-bottom:10px}
+  .list{max-width:900px;margin:48px auto 0;display:flex;flex-direction:column;gap:18px}
+  .card{background:#111;border:1px solid #1c1c1c;border-radius:14px;overflow:hidden;transition:border-color .2s}
+  .card:hover{border-color:#2e2e2e}
+  .card-head{display:flex;align-items:flex-start;justify-content:space-between;padding:26px 28px 22px;border-bottom:1px solid #1a1a1a}
+  .card-heart{font-size:18px;margin-bottom:10px;opacity:.5}
+  .card-title{font-size:15px;font-weight:400;color:#e8e4de;line-height:1.4;margin-bottom:6px}
   .card-date{font-size:12px;color:#444;letter-spacing:.06em}
-  .card-arrow{position:absolute;right:22px;top:50%;transform:translateY(-50%);font-size:20px;color:#2a2a2a;transition:color .2s,right .15s}
-  .card:hover .card-arrow{color:#c8a96e;right:18px}
-  .empty{max-width:860px;margin:100px auto;text-align:center;color:#333;font-size:15px}
+  .card-notion{font-size:12px;color:#444;text-decoration:none;border:1px solid #222;border-radius:8px;padding:6px 12px;white-space:nowrap;transition:border-color .2s,color .2s;margin-top:4px}
+  .card-notion:hover{border-color:#c8a96e;color:#c8a96e}
+  .resp-body{padding:20px 28px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px 24px}
+  .resp-row{display:flex;flex-direction:column;gap:4px}
+  .resp-label{font-size:10px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:#555}
+  .resp-val{font-size:13px;color:#c8c4be;line-height:1.5}
+  .resp-empty{padding:18px 28px;font-size:13px;color:#333;font-style:italic}
+  .empty{max-width:900px;margin:100px auto;text-align:center;color:#333;font-size:15px}
   .empty span{display:block;font-size:52px;margin-bottom:18px;opacity:.2}
-  .footer{max-width:860px;margin:60px auto 0;text-align:center;font-size:12px;color:#2a2a2a;letter-spacing:.12em;text-transform:uppercase}
+  .footer{max-width:900px;margin:60px auto 0;text-align:center;font-size:12px;color:#2a2a2a;letter-spacing:.12em;text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -240,12 +315,12 @@ def build_dashboard_html(pages):
   <div class="logo">KB Company</div>
   <h1>Dashboard de Briefings</h1>
   <div class="sub">Respostas mensais dos clientes</div>
-  <div style="margin-top:28px">
+  <div class="bar">
     <span class="count">""" + str(total) + " briefing" + plural + " registrado" + plural + """</span>
-    <a class="refresh" href="/dashboard">\u21bb atualizar</a>
+    <a class="refresh" href="/dashboard">\u21bb Atualizar</a>
   </div>
 </div>
-<div class="grid">""" + (cards if cards else empty_block) + """</div>
+<div class="list">""" + (cards if cards else empty_block) + """</div>
 <div class="footer">KB Company &copy; """ + str(datetime.now().year) + """</div>
 </body>
 </html>"""
@@ -298,7 +373,7 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def index():
-    return jsonify({"status": "KB Briefing Mensal v5 - online"})
+    return jsonify({"status": "KB Briefing Mensal v6 - online"})
 
 
 if __name__ == "__main__":
