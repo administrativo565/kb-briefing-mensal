@@ -82,7 +82,8 @@ def salvar_no_notion(dados_str, diagnostico):
     result = resp.json()
     if len(blocos) > 100 and result.get("id"):
         for i in range(100, len(blocos), 100):
-            req_lib.patch(f"https://api.notion.com/v1/blocks/{result[chr(39)]id[chr(39)]}/children", headers=headers, json={"children": blocos[i:i+100]}, timeout=30)
+            block_id = result.get("id")
+            req_lib.patch(f"https://api.notion.com/v1/blocks/{block_id}/children", headers=headers, json={"children": blocos[i:i+100]}, timeout=30)
     return result
 
 
