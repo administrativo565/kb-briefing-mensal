@@ -1,212 +1,215 @@
 """
-KB Briefing Mensal - Servidor de Automacao
-Recebe o formulario -> chama Groq (Llama) -> salva no Notion
+KB Briefing Mensal - Servidor de Automacao v4
 """
-
 from flask import Flask, request, jsonify
 import requests as req_lib
-import json
-import os
+import json, os, re
 from datetime import datetime
 
 app = Flask(__name__)
-
-GROQ_API_KEY       = os.environ.get("GROQ_API_KEY", "")
-NOTION_TOKEN       = os.environ.get("NOTION_TOKEN", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 
 PROMPT = """Voce e uma estrategista de conteudo digital que trabalha na agencia KB Company.
-Abaixo estao os dados preenchidos pelo CLIENTE no briefing mensal.
-O cliente e a pessoa ou negocio para quem a KB Company presta servicos de marketing e conteudo digital.
+Sua tarefa e analisar o briefing mensal de um cliente e gerar um diagnostico estrategico detalhado.
 
-Gere um diagnostico estrategico COMPLETO sobre o CLIENTE com base nas informacoes abaixo.
-O diagnostico deve falar sobre o NEGOCIO DO CLIENTE, usando o nome do cliente, nao sobre a KB Company.
-
-DADOS DO CLIENTE:
-{dados}
+IMPORTANTE: A KB Company e a AGENCIA que presta servico. O diagnostico deve falar sobre o NEGOCIO DO CLIENTE, usando o nome do cliente fornecido no campo cliente, nao sobre a KB Company.
 
 Estruture o diagnostico nas seguintes secoes:
+1. VISAO GERAL DO MES
+2. ANALISE DE PERFORMANCE
+3. PONTOS FORTES
+4. DESAFIOS E OPORTUNIDADES
+5. RECOMENDACOES ESTRATEGICAS
+6. PROXIMOS PASSOS PRIORITARIOS
 
-1. VISAO GERAL DO MES - resumo do periodo com base nos dados fornecidos
-2. PONTOS FORTES - o que esta funcionando bem no negocio do cliente
-3. PONTOS DE ATENCAO - o que precisa de melhoria ou atencao
-4. DIAGNOSTICO COMERCIAL - analise das metricas, funis e vendas
-5. ESTRATEGIA DE CONTEUDO RECOMENDADA - sugestoes especificas para o proximo mes
-6. PROXIMOS PASSOS PRIORITARIOS - acoes concretas e prioritarias
-
-Responda sempre em portugues. Seja especifico e use os dados reais informados."""
+Responda sempre em portugues. Seja especifico e actionavel."""
 
 
 def chamar_groq(dados_str):
-    resp = req_lib.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-        json={
-            "model": "llama-3.3-70b-versatile",
-            "messages": [{"role": "user", "content": PROMPT.format(dados=dados_str)}],
-            "temperature": 0.7,
-            "max_tokens": 3000
-        },
-        timeout=60,
-    )
-    data = resp.json()
-    if "choices" not in data:
-        raise Exception(f"Groq error: {data}")
-    return data["choices"][0]["message"]["content"]
-
-
-def bloco_texto(texto, bold=False):
-    return {
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [{"type": "text", "text": {"content": str(texto)[:2000]}, "annotations": {"bold": bold}}]
-        }
+    if not GROQ_API_KEY:
+        return "Erro: GROQ_API_KEY nao configurada."
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    body = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": PROMPT},
+            {"role": "user", "content": f"Dados do briefing:\n\n{dados_str}"}
+        ],
+        "max_tokens": 2000,
+        "temperature": 0.7
     }
+    try:
+        resp = req_lib.post(url, headers=headers, json=body, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"Erro ao chamar Groq: {str(e)}"
 
 
-def bloco_heading(texto, level=2):
-    tipo = f"heading_{level}"
-    return {
-        "object": "block",
-        "type": tipo,
-        tipo: {"rich_text": [{"type": "text", "text": {"content": str(texto)}}]}
-    }
+def paragrafo(texto, bold=False):
+    return {"object": "block", "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": texto},
+                                         "annotations": {"bold": bold}}]}}
 
 
-def bloco_divider():
+def heading2(texto):
+    return {"object": "block", "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": texto}}]}}
+
+
+def heading3(texto):
+    return {"object": "block", "type": "heading_3",
+            "heading_3": {"rich_text": [{"type": "text", "text": {"content": texto}}]}}
+
+
+def divider():
     return {"object": "block", "type": "divider", "divider": {}}
 
 
-def campo(label, valor):
-    if not valor:
-        return []
-    return [bloco_texto(f"{label}: {valor}")]
+def callout(texto, icon="🖤"):
+    return {"object": "block", "type": "callout",
+            "callout": {"rich_text": [{"type": "text", "text": {"content": texto}}],
+                        "icon": {"type": "emoji", "emoji": icon},
+                        "color": "gray_background"}}
 
 
 def blocos_formulario(dados):
     blocos = []
-    blocos.append(bloco_heading("RESPOSTAS DO FORMULARIO", 2))
-    blocos.append(bloco_divider())
+    blocos.append(heading2("🖤 BRIEFING DO CLIENTE"))
+    blocos.append(divider())
 
-    blocos.append(bloco_heading("DISPONIBILIDADE PARA GRAVACAO", 3))
-    blocos += campo("Pode gravar", dados.get("podeGravar", ""))
-    blocos += campo("Materiais disponiveis", dados.get("materiaisDisponiveis", ""))
-    blocos += campo("Preferencia de data 05-15", dados.get("preferenciaData0515", ""))
-    blocos += campo("Obs sobre gravacao", dados.get("obsGravacao", ""))
+    pode_gravar = dados.get("podeGravar", "")
+    if pode_gravar:
+        blocos.append(heading3("Disponibilidade para Gravacao"))
+        blocos.append(callout(pode_gravar))
 
-    blocos.append(bloco_divider())
+    campos_comerciais = []
+    for campo, label in [
+        ("mes", "Mes de referencia"),
+        ("faturamento", "Faturamento"),
+        ("novosClientes", "Novos clientes"),
+        ("servicoDestaque", "Servico em destaque"),
+        ("precoMedio", "Preco medio"),
+        ("ticketMedio", "Ticket medio"),
+        ("satisfacaoClientes", "Satisfacao dos clientes"),
+    ]:
+        val = dados.get(campo, "")
+        if val:
+            campos_comerciais.append(f"{label}: {val}")
 
-    blocos.append(bloco_heading("DADOS COMERCIAIS", 3))
-    blocos += campo("Funis utilizados", dados.get("funisUtilizados", ""))
-    blocos += campo("Funil com mais resultado", dados.get("funilMaisResultado", ""))
-    blocos += campo("Calls agendadas", dados.get("callsAgendadas", ""))
-    blocos += campo("Vendas fechadas", dados.get("vendasFechadas", ""))
-    blocos += campo("Ticket medio", dados.get("ticketMedio", ""))
-    blocos += campo("Taxa de conversao", dados.get("taxaConversao", ""))
-    blocos += campo("Objecoes recorrentes", dados.get("objecoesRecorrentes", ""))
-    blocos += campo("Motivo nao-fechamento", dados.get("motivoNaoFechamento", ""))
-    blocos += campo("Destaque do mes", dados.get("destaqueDoMes", ""))
+    if campos_comerciais:
+        blocos.append(heading3("Dados Comerciais"))
+        blocos.append(callout("\n".join(campos_comerciais)))
 
-    blocos.append(bloco_divider())
+    campos_conteudo = [
+        ("historias", "Historias do mes"),
+        ("temas", "Temas sugeridos"),
+        ("bastidores", "Bastidores"),
+        ("duvidasFrequentes", "Duvidas frequentes"),
+        ("tendencias", "Tendencias do setor"),
+        ("objetivoPrincipal", "Objetivo principal"),
+        ("observacoes", "Observacoes"),
+    ]
+    tem_conteudo = any(dados.get(c, "") for c, _ in campos_conteudo)
+    if tem_conteudo:
+        blocos.append(heading3("Historias e Conteudo"))
+        for campo, label in campos_conteudo:
+            val = dados.get(campo, "")
+            if val:
+                blocos.append(callout(f"{label}: {val}"))
 
-    blocos.append(bloco_heading("HISTORIAS E CONTEUDO", 3))
-    blocos += campo("Historias do mes", dados.get("historiasDoMes", ""))
-    blocos += campo("Resultados de clientes", dados.get("resultadosClientes", ""))
-    blocos += campo("Produtos e servicos em destaque", dados.get("produtosServicos", ""))
-    blocos += campo("Novidades e lancamentos", dados.get("novidades", ""))
-    blocos += campo("Temas especificos", dados.get("temasEspecificos", ""))
-    blocos += campo("Referencias de conteudo", dados.get("referencias", ""))
-    blocos += campo("Tem audio", dados.get("temAudio", ""))
-    blocos += campo("Obs finais", dados.get("obsFinais", ""))
-
-    blocos.append(bloco_divider())
-    blocos.append(bloco_heading("DIAGNOSTICO ESTRATEGICO GERADO POR IA", 2))
-    blocos.append(bloco_divider())
-
+    blocos.append(divider())
+    blocos.append(heading2("🖤 DIAGNOSTICO ESTRATEGICO"))
+    blocos.append(divider())
     return blocos
 
 
 def texto_para_blocos(texto):
     blocos = []
-    for linha in texto.split("\n"):
+    for linha in texto.strip().split("\n"):
         linha = linha.strip()
         if not linha:
             continue
-        blocos.append(bloco_texto(linha))
+        if re.match(r"^\d+\.\s+[A-Z][A-Z ]+$", linha):
+            blocos.append(heading3(linha))
+        elif linha.startswith("**") and linha.endswith("**"):
+            blocos.append(paragrafo(linha.strip("*"), bold=True))
+        elif linha.startswith("#"):
+            nivel = len(linha) - len(linha.lstrip("#"))
+            texto_h = linha.lstrip("#").strip()
+            blocos.append(heading2(texto_h) if nivel <= 2 else heading3(texto_h))
+        else:
+            blocos.append(paragrafo(linha))
     return blocos
 
 
 def salvar_no_notion(dados, diagnostico):
-    cliente = dados.get("nomeCliente", dados.get("cliente", "Cliente"))
-    mes = dados.get("mesReferencia", dados.get("mes", ""))
-    if not mes:
-        mes = datetime.now().strftime("%Y-%m")
-    titulo = f"Briefing {cliente} - {mes}"
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
+        return {"erro": "Notion nao configurado"}
 
-    blocos_form = blocos_formulario(dados)
-    blocos_diag = texto_para_blocos(diagnostico)
-    todos_blocos = blocos_form + blocos_diag
+    cliente = dados.get("cliente", "Cliente")
+    mes = dados.get("mes", datetime.now().strftime("%m/%Y"))
+    titulo = f"Briefing {cliente} - {mes}"
 
     headers = {
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28"
     }
-    payload = {
+
+    body = {
         "parent": {"database_id": NOTION_DATABASE_ID},
         "properties": {
-            "Cliente": {"title": [{"text": {"content": titulo}}]}
+            "Cliente": {"title": [{"type": "text", "text": {"content": titulo}}]}
         },
-        "children": todos_blocos[:100]
+        "children": []
     }
-    resp = req_lib.post("https://api.notion.com/v1/pages", headers=headers, json=payload, timeout=30)
-    result = resp.json()
-    if len(todos_blocos) > 100 and result.get("id"):
-        block_id = result.get("id")
-        for i in range(100, len(todos_blocos), 100):
-            req_lib.patch(
-                f"https://api.notion.com/v1/blocks/{block_id}/children",
-                headers=headers,
-                json={"children": todos_blocos[i:i+100]},
-                timeout=30
-            )
-    return result
 
+    resp = req_lib.post("https://api.notion.com/v1/pages", headers=headers, json=body, timeout=30)
+    if not resp.ok:
+        return {"erro": resp.text}
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"status": "KB Briefing Mensal - servidor ativo", "versao": "3.0"})
+    page_id = resp.json().get("id")
+    todos_blocos = blocos_formulario(dados) + texto_para_blocos(diagnostico)
+    for i in range(0, len(todos_blocos), 100):
+        lote = todos_blocos[i:i+100]
+        req_lib.patch(
+            f"https://api.notion.com/v1/blocks/{page_id}/children",
+            headers=headers, json={"children": lote}, timeout=30
+        )
+
+    return {"ok": True, "page_id": page_id, "titulo": titulo}
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        if request.content_type and "application/json" in request.content_type:
-            body = request.get_json(force=True)
-            dados_raw = body.get("dados", body)
+        content_type = request.content_type or ""
+        if "application/json" in content_type:
+            dados = request.get_json(force=True)
         else:
-            dados_str_raw = request.form.get("dados", "{}")
-            dados_raw = json.loads(dados_str_raw)
+            dados = request.form.to_dict()
 
-        if isinstance(dados_raw, str):
-            dados = json.loads(dados_raw)
-        else:
-            dados = dados_raw
+        if not dados:
+            return jsonify({"erro": "Dados vazios"}), 400
 
-        dados_str = "\n".join([f"{k}: {v}" for k, v in dados.items() if v])
+        dados_str = json.dumps(dados, ensure_ascii=False, indent=2)
         diagnostico = chamar_groq(dados_str)
-        notion_result = salvar_no_notion(dados, diagnostico)
-
-        return jsonify({
-            "success": True,
-            "diagnostico": diagnostico,
-            "notion_page": notion_result.get("url", "")
-        })
+        resultado_notion = salvar_no_notion(dados, diagnostico)
+        return jsonify({"ok": True, "diagnostico": diagnostico, "notion": resultado_notion})
 
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({"status": "KB Briefing Mensal v4 - online"})
 
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
