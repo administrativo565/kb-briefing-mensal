@@ -56,7 +56,7 @@ Seja específico, estratégico e use os dados fornecidos para embasar cada anál
 
 def chamar_gemini(dados_str: str) -> str:
     """Chama a API do Gemini com os dados do briefing e retorna o diagnóstico."""
-    model = genai.GenerativeModel("gemini-pro")
+    model = genai.GenerativeModel("gemini-2.0-flash")
     response = model.generate_content(PROMPT.format(dados=dados_str))
     return response.text
 
